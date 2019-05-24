@@ -19,20 +19,16 @@ daos_tests:
   num_replicas:
     num_replicas: 1
   Tests: !mux
-    test_r_0-16:
+    test_r_0-17:
       daos_test: r
-      test_name: rebuild tests 0-16
-      args: -s3 -u subtests="0-16"
+      test_name: rebuild tests 0-17
+      args: -s3 -u subtests="0-17"
       test_timeout: 1500
-    test_r_18-24:
+    test_r_19-25:
       daos_test: r
-      test_name: rebuild tests 18-24
-      args: -s3 -u subtests="18-24"
+      test_name: rebuild tests 19-25
+      args: -s3 -u subtests="19-25"
       test_timeout: 1500
-    test_r_25:
-      daos_test: r
-      test_name: rebuild tests 25
-      args: -s3 -u subtests="25"
     test_r_26:
       daos_test: r
       test_name: rebuild tests 26
@@ -45,8 +41,12 @@ daos_tests:
       daos_test: r
       test_name: rebuild tests 28
       args: -s3 -u subtests="28"
-    test_r_31:
+    test_r_29:
       daos_test: r
-      test_name: rebuild tests 31
-      args: -s3 -u subtests="31"
+      test_name: rebuild tests 29
+      args: -s3 -u subtests="29"
+    test_r_32:
+      daos_test: r
+      test_name: rebuild tests 32
+      args: -s3 -u subtests="32"
       test_timeout: 1500

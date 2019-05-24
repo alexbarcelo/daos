@@ -268,7 +268,8 @@ CRT_RPC_DECLARE(cont_attr_set, DAOS_ISEQ_CONT_ATTR_SET, DAOS_OSEQ_CONT_ATTR_SET)
 	((daos_epoch_t)		(cei_epoch)		CRT_VAR)
 
 #define DAOS_OSEQ_CONT_EPOCH_OP	/* output fields */		 \
-	((struct cont_op_out)	(ceo_op)		CRT_VAR)
+	((struct cont_op_out)	(ceo_op)		CRT_VAR) \
+	((daos_epoch_t)		(ceo_epoch)		CRT_VAR)
 
 CRT_RPC_DECLARE(cont_epoch_op, DAOS_ISEQ_CONT_EPOCH_OP, DAOS_OSEQ_CONT_EPOCH_OP)
 

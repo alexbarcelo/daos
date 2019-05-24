@@ -1402,8 +1402,9 @@ obj_iter_vos(crt_rpc_t *rpc, struct vos_iter_anchors *anchors,
 		param.ip_dkey = oei->oei_dkey;
 	if (oei->oei_akey.iov_len > 0)
 		param.ip_akey = oei->oei_akey;
-	param.ip_epr.epr_lo = oei->oei_epoch;
-	param.ip_epr.epr_hi = oei->oei_epoch;
+
+	param.ip_epr.epr_lo = oei->oei_epr.epr_lo;
+	param.ip_epr.epr_hi = oei->oei_epr.epr_hi;
 	param.ip_epc_expr = VOS_IT_EPC_LE;
 
 	if (opc == DAOS_OBJ_RECX_RPC_ENUMERATE) {
@@ -1411,15 +1412,10 @@ obj_iter_vos(crt_rpc_t *rpc, struct vos_iter_anchors *anchors,
 		    oei->oei_akey.iov_len == 0)
 			D_GOTO(out_cont_hdl, rc = -DER_PROTO);
 
-		if (oei->oei_rec_type == DAOS_IOD_ARRAY) {
+		if (oei->oei_rec_type == DAOS_IOD_ARRAY)
 			type = VOS_ITER_RECX;
-			/* To capture everything visible, we must search from
-			 * 0 to our epoch
-			 */
-			param.ip_epr.epr_lo = 0;
-		} else {
+		else
 			type = VOS_ITER_SINGLE;
-		}
 
 		param.ip_epc_expr = VOS_IT_EPC_RE;
 		/** Only show visible records and skip punches */
@@ -1441,7 +1437,6 @@ obj_iter_vos(crt_rpc_t *rpc, struct vos_iter_anchors *anchors,
 		} else {
 			param.ip_epc_expr = VOS_IT_EPC_RE;
 		}
-		param.ip_epr.epr_lo = 0;
 		recursive = true;
 		enum_arg->chk_key2big = true;
 	}
@@ -1466,8 +1461,9 @@ obj_iter_vos(crt_rpc_t *rpc, struct vos_iter_anchors *anchors,
 	if (type == VOS_ITER_SINGLE)
 		anchors->ia_ev = anchors->ia_sv;
 
-	D_DEBUG(DB_IO, ""DF_UOID" iterate type %d tag %d rc %d\n",
-		DP_UOID(oei->oei_oid), type, dss_get_module_info()->dmi_tgt_id,
+	D_DEBUG(DB_IO, ""DF_UOID" iterate "DF_U64"-"DF_U64" type %d tag %d"
+		" rc %d\n", DP_UOID(oei->oei_oid), param.ip_epr.epr_lo,
+		param.ip_epr.epr_hi, type, dss_get_module_info()->dmi_tgt_id,
 		rc);
 out_cont_hdl:
 	if (cont_hdl)
@@ -1556,12 +1552,6 @@ ds_obj_enum_handler(crt_rpc_t *rpc)
 	anchors.ia_dkey = oei->oei_dkey_anchor;
 	anchors.ia_akey = oei->oei_akey_anchor;
 	anchors.ia_ev = oei->oei_anchor;
-
-	/* FIXME: until distributed transaction. */
-	if (oei->oei_epoch == DAOS_EPOCH_MAX) {
-		oei->oei_epoch = crt_hlc_get();
-		D_DEBUG(DB_IO, "overwrite epoch "DF_U64"\n", oei->oei_epoch);
-	}
 
 	/* TODO: Transfer the inline_thres from enumerate RPC */
 	enum_arg.inline_thres = 32;

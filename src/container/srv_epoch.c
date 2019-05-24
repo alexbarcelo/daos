@@ -282,13 +282,13 @@ out:
 }
 
 static int
-snap_create_bcast(struct rdb_tx *tx, struct cont *cont, crt_context_t *ctx)
+snap_create_bcast(struct rdb_tx *tx, struct cont *cont, crt_context_t *ctx,
+		  daos_epoch_t *epoch)
 {
 	struct cont_tgt_snapshot_notify_in	*in;
 	struct cont_tgt_snapshot_notify_out	*out;
 	crt_rpc_t				*rpc;
 	char					 zero = 0;
-	daos_epoch_t				 epoch;
 	d_iov_t					 key;
 	d_iov_t					 value;
 	int					 rc;
@@ -314,8 +314,8 @@ snap_create_bcast(struct rdb_tx *tx, struct cont *cont, crt_context_t *ctx)
 		goto out_rpc;
 	}
 
-	epoch = crt_hlc_get();
-	d_iov_set(&key, &epoch, sizeof(epoch));
+	*epoch = crt_hlc_get();
+	d_iov_set(&key, epoch, sizeof(*epoch));
 	d_iov_set(&value, &zero, sizeof(zero));
 	rc = rdb_tx_update(tx, &cont->c_snaps, &key, &value);
 	if (rc != 0) {
@@ -323,8 +323,8 @@ snap_create_bcast(struct rdb_tx *tx, struct cont *cont, crt_context_t *ctx)
 			DP_CONT(cont->c_svc->cs_pool_uuid, cont->c_uuid), rc);
 		goto out_rpc;
 	}
-	D_DEBUG(DF_DSMS, DF_CONT": created snapshot %lu\n",
-		DP_CONT(cont->c_svc->cs_pool_uuid, cont->c_uuid), epoch);
+	D_DEBUG(DF_DSMS, DF_CONT": created snapshot "DF_U64"\n",
+		DP_CONT(cont->c_svc->cs_pool_uuid, cont->c_uuid), *epoch);
 	update_snap_iv(tx, cont);
 out_rpc:
 	crt_req_decref(rpc);
@@ -338,7 +338,9 @@ ds_cont_epoch_commit(struct rdb_tx *tx, struct ds_pool_hdl *pool_hdl,
 		     crt_rpc_t *rpc, bool snapshot)
 {
 	struct cont_epoch_op_in	       *in = crt_req_get(rpc);
+	struct cont_epoch_op_out       *out = crt_reply_get(rpc);
 	daos_epoch_t			ghce;
+	daos_epoch_t			snap_eph;
 	int				rc;
 
 	D_DEBUG(DF_DSMS, DF_CONT": processing rpc %p: epoch="DF_U64"\n",
@@ -369,11 +371,12 @@ ds_cont_epoch_commit(struct rdb_tx *tx, struct ds_pool_hdl *pool_hdl,
 	rc = update_ghce(tx, cont, in->cei_epoch);
 	if (rc != 0)
 		goto out;
-	ghce = in->cei_epoch;
-
 out_snap:
-	if (snapshot)
-		rc = snap_create_bcast(tx, cont, rpc->cr_ctx);
+	if (snapshot) {
+		rc = snap_create_bcast(tx, cont, rpc->cr_ctx, &snap_eph);
+		if (rc == 0)
+			out->ceo_epoch = snap_eph;
+	}
 out:
 	D_DEBUG(DF_DSMS, DF_CONT": replying rpc %p: %d\n",
 		DP_CONT(pool_hdl->sph_pool->sp_uuid, in->cei_op.ci_uuid), rpc,
@@ -542,6 +545,9 @@ out_lock:
 	rdb_tx_end(&tx);
 out_put:
 	cont_svc_put_leader(svc);
+
+	D_DEBUG(DB_TRACE, DF_UUID"/"DF_UUID" get %d snaps rc %d\n",
+		DP_UUID(pool_uuid), DP_UUID(cont_uuid), *snap_count, rc);
 
 	return rc;
 }

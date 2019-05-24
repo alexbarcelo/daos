@@ -87,6 +87,7 @@ cont_child_alloc_ref(void *key, unsigned int ksize, void *varg,
 		goto out_cond;
 
 	uuid_copy(cont->sc_uuid, key);
+	cont->sc_pool = pool;
 	cont->sc_dtx_resync_time = crt_hlc_get();
 	cont->sc_aggregation_min = DAOS_EPOCH_MAX;
 	/* prevent aggregation till snapshot iv refreshed */
@@ -1452,7 +1453,8 @@ cont_child_aggregate(struct ds_cont_child *cont, uint64_t *sleep)
 	 * sc_aggregation_min != DAOS_EPOCH_MAX means we need to aggregate
 	 * from epoch 0 because some snapshot was deleted.
 	 */
-	if (cont->sc_aggregation_min != DAOS_EPOCH_MAX) {
+	if (cont->sc_aggregation_min != DAOS_EPOCH_MAX ||
+	    cont->sc_pool->spc_reset_aggregation) {
 		epoch_min = 0;
 		/*
 		 * Set sc_aggregation_min to non-zero so that we can tell
@@ -1460,6 +1462,7 @@ cont_child_aggregate(struct ds_cont_child *cont, uint64_t *sleep)
 		 * aggregation done.
 		 */
 		cont->sc_aggregation_min = hlc;
+		cont->sc_pool->spc_reset_aggregation = 0;
 	} else {
 		epoch_min = cinfo.ci_hae;
 	}
@@ -1484,12 +1487,15 @@ cont_child_aggregate(struct ds_cont_child *cont, uint64_t *sleep)
 	D_ASSERTF(epoch_min <= epoch_max, "Min "DF_U64", Max "DF_U64"\n",
 		  epoch_min, epoch_max);
 
+	D_ASSERTF(cinfo.ci_hae <= epoch_max,
+		  "Highest aggregated "DF_U64", Max "DF_U64"\n",
+		  cinfo.ci_hae, epoch_max);
+
 	/*
 	 * Find highest snapshot less than last aggregated epoch.
-	 * TODO: Rebuild epoch needs be taken into account as well.
 	 */
 	for (i = 0; i < cont->sc_snapshots_nr &&
-			cont->sc_snapshots[i] < epoch_min; ++i)
+		    cont->sc_snapshots[i] < epoch_min; ++i)
 		;
 
 	if (i == 0)
@@ -1497,17 +1503,27 @@ cont_child_aggregate(struct ds_cont_child *cont, uint64_t *sleep)
 	else
 		epoch_range.epr_lo = cont->sc_snapshots[i-1] + 1;
 
+	/* Not cross the rebuild epoch */
+	if (cont->sc_pool->spc_rebuild_epoch > epoch_range.epr_lo &&
+	    cont->sc_pool->spc_rebuild_epoch < epoch_min)
+		epoch_range.epr_lo = cont->sc_pool->spc_rebuild_epoch + 1;
+
+	D_DEBUG(DB_EPC, DF_UUID"[%d]: MIN: %lu; MAX: %lu HLC: %lu",
+		DP_UUID(cont->sc_uuid), dss_get_module_info()->dmi_tgt_id,
+		epoch_range.epr_lo, epoch_max, hlc);
 
 	if (epoch_range.epr_lo >= epoch_max)
 		return 0;
 
-	D_DEBUG(DB_EPC, DF_UUID"[%d]: MIN: %lu; HLC: %lu",
-		DP_UUID(cont->sc_uuid), dss_get_module_info()->dmi_tgt_id,
-		epoch_min, hlc);
-
 	for ( ; i < cont->sc_snapshots_nr &&
 		cont->sc_snapshots[i] < epoch_max; ++i) {
 		epoch_range.epr_hi = cont->sc_snapshots[i];
+
+		/* Not cross the rebuild epoch */
+		if (cont->sc_pool->spc_rebuild_epoch > epoch_range.epr_lo &&
+		    cont->sc_pool->spc_rebuild_epoch < epoch_range.epr_hi)
+			epoch_range.epr_hi = cont->sc_pool->spc_rebuild_epoch;
+
 		D_DEBUG(DB_EPC, DF_UUID"[%d]: Aggregating {%lu -> %lu}\n",
 			DP_UUID(cont->sc_uuid),
 			dss_get_module_info()->dmi_tgt_id,
@@ -1523,9 +1539,16 @@ cont_child_aggregate(struct ds_cont_child *cont, uint64_t *sleep)
 		goto out;
 
 	epoch_range.epr_hi = epoch_max;
+
+	/* Not cross the rebuild epoch */
+	if (cont->sc_pool->spc_rebuild_epoch > epoch_range.epr_lo &&
+	    cont->sc_pool->spc_rebuild_epoch < epoch_range.epr_hi)
+		epoch_range.epr_hi = cont->sc_pool->spc_rebuild_epoch;
+
 	D_DEBUG(DB_EPC, DF_UUID"[%d]: Aggregating {%lu -> %lu}\n",
 		DP_UUID(cont->sc_uuid), dss_get_module_info()->dmi_tgt_id,
 		epoch_range.epr_lo, epoch_range.epr_hi);
+
 	rc = vos_aggregate(cont->sc_hdl, &epoch_range);
 out:
 	/* No snapshot deletion happened in this round of aggregation */

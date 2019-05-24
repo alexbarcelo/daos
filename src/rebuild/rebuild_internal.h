@@ -76,6 +76,7 @@ struct rebuild_obj_key {
 struct rebuild_tgt_pool_tracker {
 	/** pin the pool during the rebuild */
 	struct ds_pool		*rt_pool;
+	struct dss_sleep_ult	*rt_ult;
 	/** active rebuild pullers for each xstream */
 	struct rebuild_puller	*rt_pullers;
 	/** # xstreams */
@@ -113,7 +114,12 @@ struct rebuild_tgt_pool_tracker {
 	uint64_t		rt_reported_obj_cnt;
 	uint64_t		rt_reported_rec_cnt;
 	uint64_t		rt_reported_size;
-
+	/* global stable epoch to use for rebuilding the data */
+	uint64_t		rt_stable_epoch;
+	/* local rebuild epoch mainly to constrain the VOS aggregation
+	 * to make sure aggreation will not cross the epoch
+	 */
+	uint64_t		rt_rebuild_epoch;
 	unsigned int		rt_lead_puller_running:1,
 				rt_abort:1,
 				/* re-report #rebuilt cnt per master change */
@@ -129,6 +135,7 @@ struct rebuild_global_pool_tracker {
 	/* rebuild status */
 	struct daos_rebuild_status	rgt_status;
 
+	struct dss_sleep_ult		*rgt_ult;
 	/* link to rebuild_global.rg_global_tracker_list */
 	d_list_t	rgt_list;
 
@@ -157,8 +164,13 @@ struct rebuild_global_pool_tracker {
 	uint64_t	rgt_leader_term;
 
 	uint64_t	rgt_time_start;
+
+	/* stable epoch of the rebuild */
+	uint64_t	rgt_stable_epoch;
+
 	unsigned int	rgt_scan_done:1,
 			rgt_done:1,
+			rgt_notify_stable_epoch:1,
 			rgt_abort:1;
 };
 
@@ -267,6 +279,7 @@ struct rebuild_iv {
 	uint64_t	riv_rec_count;
 	uint64_t	riv_size;
 	uint64_t	riv_leader_term;
+	uint64_t	riv_stable_epoch;
 	unsigned int	riv_rank;
 	unsigned int	riv_master_rank;
 	unsigned int	riv_ver;
@@ -297,7 +310,6 @@ void rebuild_obj_handler(crt_rpc_t *rpc);
 void rebuild_tgt_scan_handler(crt_rpc_t *rpc);
 int rebuild_tgt_scan_aggregator(crt_rpc_t *source, crt_rpc_t *result,
 				void *priv);
-int rebuild_tgt_scan_post_reply(crt_rpc_t *rpc, void *arg);
 
 int rebuild_iv_fetch(void *ns, struct rebuild_iv *rebuild_iv);
 int rebuild_iv_update(void *ns, struct rebuild_iv *rebuild_iv,
