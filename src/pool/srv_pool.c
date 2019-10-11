@@ -980,7 +980,6 @@ pool_svc_step_up_cb(struct ds_rsvc *rsvc)
 	struct pool_buf	       *map_buf = NULL;
 	uint32_t		map_version;
 	bool			cont_svc_up = false;
-	d_rank_t		rank;
 	int			rc;
 
 	/* Read the pool map into map_buf and map_version. */
@@ -1028,10 +1027,8 @@ out_lock:
 	if (rc != 0)
 		goto out;
 
-	rc = crt_group_rank(NULL, &rank);
-	D_ASSERTF(rc == 0, "%d\n", rc);
 	D_PRINT(DF_UUID": rank %u became pool service leader "DF_U64"\n",
-		DP_UUID(svc->ps_uuid), rank, svc->ps_rsvc.s_term);
+		DP_UUID(svc->ps_uuid), dss_self_rank(), svc->ps_rsvc.s_term);
 out:
 	if (rc != 0) {
 		if (cont_svc_up)
@@ -1049,17 +1046,13 @@ out:
 static void
 pool_svc_step_down_cb(struct ds_rsvc *rsvc)
 {
-	struct pool_svc	       *svc = pool_svc_obj(rsvc);
-	d_rank_t		rank;
-	int			rc;
+	struct pool_svc *svc = pool_svc_obj(rsvc);
 
 	ds_cont_svc_step_down(svc->ps_cont_svc);
 	fini_svc_pool(svc);
 
-	rc = crt_group_rank(NULL, &rank);
-	D_ASSERTF(rc == 0, "%d\n", rc);
 	D_PRINT(DF_UUID": rank %u no longer pool service leader "DF_U64"\n",
-		DP_UUID(svc->ps_uuid), rank, svc->ps_rsvc.s_term);
+		DP_UUID(svc->ps_uuid), dss_self_rank(), svc->ps_rsvc.s_term);
 }
 
 static void
