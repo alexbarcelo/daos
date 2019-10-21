@@ -755,6 +755,7 @@ ds_pool_tgt_connect_handler(crt_rpc_t *rpc)
 	rc = pool_hdl_add(hdl);
 	if (rc != 0) {
 		ds_pool_put(pool);
+		D_FREE(hdl);
 		D_GOTO(out, rc);
 	}
 
