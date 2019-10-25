@@ -857,7 +857,7 @@ update_pool_group(struct ds_pool *pool, struct pool_map *map)
 		return rc;
 
 	/* Let secondary rank == primary rank. */
-	rc = crt_group_secondary_modify(group, &ranks, &ranks,
+	rc = crt_group_secondary_modify(pool->sp_group, &ranks, &ranks,
 					CRT_GROUP_MOD_OP_REPLACE);
 	if (rc != 0) {
 		if (rc == -DER_OOG)
