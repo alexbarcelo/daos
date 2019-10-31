@@ -3059,12 +3059,10 @@ out:
 }
 
 /* Try to create iv namespace for the pool */
-int
-ds_pool_iv_ns_update(struct ds_pool *pool, unsigned int master_rank,
-		     unsigned int iv_ns_id)
+void
+ds_pool_iv_ns_update(struct ds_pool *pool, unsigned int master_rank)
 {
-	return ds_iv_ns_update(pool->sp_uuid, master_rank, pool->sp_group,
-			       iv_ns_id, &pool->sp_iv_ns);
+	ds_iv_ns_update(pool->sp_iv_ns, master_rank);
 }
 
 int

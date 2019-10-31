@@ -749,87 +749,14 @@ free:
 	return rc;
 }
 
-int
-ds_iv_ns_attach(crt_context_t ctx, uuid_t pool_uuid, crt_group_t *grp,
-		unsigned int ns_id, unsigned int master_rank,
-		struct ds_iv_ns **p_iv_ns)
-{
-	struct ds_iv_ns	*ns = NULL;
-	d_rank_t	myrank = dss_self_rank();
-	int		rc;
-
-	/* the ns for master will be created in ds_iv_ns_create() */
-	if (master_rank == myrank)
-		return 0;
-
-	ns = ds_iv_ns_lookup(ns_id, master_rank);
-	if (ns) {
-		D_DEBUG(DB_TRACE, "lookup iv_ns %d master rank %d"
-			" myrank %d ns %p\n", ns_id, master_rank,
-			myrank, ns);
-		*p_iv_ns = ns;
-		return 0;
-	}
-
-	rc = iv_ns_create_internal(ns_id, pool_uuid, master_rank, &ns);
-	if (rc)
-		return rc;
-
-	rc = crt_iv_namespace_create(ctx, grp, ds_iv_ns_tree_topo, crt_iv_class,
-				     crt_iv_class_nr, 0, &ns->iv_ns);
-	if (rc)
-		D_GOTO(free, rc);
-
-	D_DEBUG(DB_TRACE, "create iv_ns %d master rank %d myrank %d ns %p\n",
-		ns_id, master_rank, myrank, ns);
-	*p_iv_ns = ns;
-
-free:
-	if (rc)
-		ds_iv_ns_destroy(ns);
-
-	return rc;
-}
-
 /* Update iv namespace */
-int
-ds_iv_ns_update(uuid_t pool_uuid, unsigned int master_rank, crt_group_t *grp,
-		unsigned int iv_ns_id, struct ds_iv_ns **iv_ns)
+void
+ds_iv_ns_update(struct ds_iv_ns *ns, unsigned int master_rank)
 {
-	struct ds_iv_ns	*ns;
-	int		rc;
-
-	D_ASSERT(iv_ns != NULL);
-	if (*iv_ns != NULL &&
-	    (*iv_ns)->iv_master_rank != master_rank) {
-		/* If root has been changed, let's destroy the
-		 * previous IV ns
-		 */
-		ds_iv_ns_destroy(*iv_ns);
-		*iv_ns = NULL;
-	}
-
-	if (*iv_ns != NULL)
-		return 0;
-
-	/* Create new iv_ns */
-	if (iv_ns_id == -1) {
-		/* master node */
-		rc = ds_iv_ns_create(dss_get_module_info()->dmi_ctx, pool_uuid,
-				     grp, &iv_ns_id, &ns);
-	} else {
-		/* other node */
-		rc = ds_iv_ns_attach(dss_get_module_info()->dmi_ctx, pool_uuid,
-				     grp, iv_ns_id, master_rank, &ns);
-	}
-
-	if (rc) {
-		D_ERROR("pool iv ns create failed %d\n", rc);
-		return rc;
-	}
-
-	*iv_ns = ns;
-	return rc;
+	D_DEBUG(DB_TRACE, "update iv_ns %u master rank %u new master rank %u "
+		"myrank %u ns %p\n", ns->iv_ns_id, ns->iv_master_rank,
+		master_rank, dss_self_rank(), ns);
+	ns->iv_master_rank = master_rank;
 }
 
 unsigned int
