@@ -666,13 +666,12 @@ iv_ns_destroy_internal(struct ds_iv_ns *ns)
 }
 
 static struct ds_iv_ns *
-ds_iv_ns_lookup(unsigned int ns_id, d_rank_t master_rank)
+ds_iv_ns_lookup(unsigned int ns_id)
 {
 	struct ds_iv_ns *ns;
 
 	d_list_for_each_entry(ns, &ds_iv_ns_list, iv_ns_link) {
-		if (ns->iv_ns_id == ns_id &&
-		    ns->iv_master_rank == master_rank)
+		if (ns->iv_ns_id == ns_id)
 			return ns;
 	}
 
@@ -685,7 +684,7 @@ iv_ns_create_internal(unsigned int ns_id, uuid_t pool_uuid,
 {
 	struct ds_iv_ns	*ns;
 
-	ns = ds_iv_ns_lookup(ns_id, master_rank);
+	ns = ds_iv_ns_lookup(ns_id);
 	if (ns)
 		return -DER_EXIST;
 
@@ -717,10 +716,7 @@ ds_iv_ns_destroy(void *ns)
 	iv_ns_destroy_internal(iv_ns);
 }
 
-/**
- * Create namespace for server IV, which will only
- * be called on master node
- */
+/** Create namespace for server IV. */
 int
 ds_iv_ns_create(crt_context_t ctx, uuid_t pool_uuid,
 		crt_group_t *grp, unsigned int *ns_id,
@@ -729,9 +725,8 @@ ds_iv_ns_create(crt_context_t ctx, uuid_t pool_uuid,
 	struct ds_iv_ns		*ns = NULL;
 	int			rc;
 
-	/* Create namespace on master */
-	rc = iv_ns_create_internal(ds_iv_ns_id++, pool_uuid, dss_self_rank(),
-				   &ns);
+	rc = iv_ns_create_internal(ds_iv_ns_id++, pool_uuid,
+				   -1 /* master_rank */, &ns);
 	if (rc)
 		return rc;
 
