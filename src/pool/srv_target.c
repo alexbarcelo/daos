@@ -854,7 +854,8 @@ update_pool_group(struct ds_pool *pool, struct pool_map *map)
 
 	/* Let secondary rank == primary rank. */
 	rc = crt_group_secondary_modify(pool->sp_group, &ranks, &ranks,
-					CRT_GROUP_MOD_OP_REPLACE);
+					CRT_GROUP_MOD_OP_REPLACE,
+					pool_map_get_version(map));
 	if (rc != 0) {
 		if (rc == -DER_OOG)
 			D_DEBUG(DB_MD, DF_UUID": SG and PG out of sync: %d\n",
