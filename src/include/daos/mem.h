@@ -42,6 +42,7 @@
  * umoff	Unified Memory offset
  */
 
+#include <libpmem.h>
 #include <libpmemobj.h>
 
 /** The offset of an object from the base address of the pool */
