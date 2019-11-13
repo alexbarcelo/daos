@@ -1,0 +1,140 @@
+[1mdiff --git a/src/include/daos_srv/pool.h b/src/include/daos_srv/pool.h[m
+[1mindex 2aceb0602..dd16b3295 100644[m
+[1m--- a/src/include/daos_srv/pool.h[m
+[1m+++ b/src/include/daos_srv/pool.h[m
+[36m@@ -150,7 +150,8 @@[m [mint ds_pool_svc_set_prop(uuid_t pool_uuid, d_rank_list_t *ranks,[m
+ int ds_pool_svc_update_acl(uuid_t pool_uuid, d_rank_list_t *ranks,[m
+ 			   struct daos_acl *acl);[m
+ int ds_pool_svc_delete_acl(uuid_t pool_uuid, d_rank_list_t *ranks,[m
+[31m-			   uint8_t principal_type, const char *principal_name);[m
+[32m+[m			[32m   enum daos_acl_principal_type principal_type,[m
+[32m+[m			[32m   const char *principal_name);[m
+ [m
+ /*[m
+  * Called by dmg on the pool service leader to list all pool handles of a pool.[m
+[1mdiff --git a/src/pool/srv_internal.h b/src/pool/srv_internal.h[m
+[1mindex 4c3b2a6a7..eb2cec278 100644[m
+[1m--- a/src/pool/srv_internal.h[m
+[1m+++ b/src/pool/srv_internal.h[m
+[36m@@ -96,6 +96,7 @@[m [mvoid ds_pool_query_handler(crt_rpc_t *rpc);[m
+ void ds_pool_get_acl_handler(crt_rpc_t *rpc);[m
+ void ds_pool_prop_set_handler(crt_rpc_t *rpc);[m
+ void ds_pool_acl_update_handler(crt_rpc_t *rpc);[m
+[32m+[m[32mvoid ds_pool_acl_delete_handler(crt_rpc_t *rpc);[m
+ void ds_pool_update_handler(crt_rpc_t *rpc);[m
+ void ds_pool_evict_handler(crt_rpc_t *rpc);[m
+ void ds_pool_svc_stop_handler(crt_rpc_t *rpc);[m
+[1mdiff --git a/src/pool/srv_pool.c b/src/pool/srv_pool.c[m
+[1mindex c24ef046b..3f4e43c03 100644[m
+[1m--- a/src/pool/srv_pool.c[m
+[1m+++ b/src/pool/srv_pool.c[m
+[36m@@ -2732,20 +2732,98 @@[m [mout:[m
+ 	return rc;[m
+ }[m
+ [m
+[32m+[m[32m/**[m
+[32m+[m[32m * Delete entries in a pool's ACL without having a handle for the pool[m
+[32m+[m[32m */[m
+[32m+[m[32mvoid[m
+[32m+[m[32mds_pool_acl_delete_handler(crt_rpc_t *rpc)[m
+[32m+[m[32m{[m
+[32m+[m	[32mstruct pool_acl_delete_in	*in = crt_req_get(rpc);[m
+[32m+[m	[32mstruct pool_acl_delete_out	*out = crt_reply_get(rpc);[m
+[32m+[m	[32mstruct pool_svc			*svc;[m
+[32m+[m	[32mstruct rdb_tx			tx;[m
+[32m+[m	[32mint				rc;[m
+[32m+[m	[32mdaos_prop_t			*prop = NULL;[m
+[32m+[m	[32mstruct daos_prop_entry		*entry = NULL;[m
+[32m+[m
+[32m+[m	[32mD_DEBUG(DF_DSMS, DF_UUID": processing rpc %p\n",[m
+[32m+[m		[32mDP_UUID(in->pui_op.pi_uuid), rpc);[m
+[32m+[m
+[32m+[m	[32mrc = pool_svc_lookup_leader(in->pdi_op.pi_uuid, &svc,[m
+[32m+[m				[32m    &out->pdo_op.po_hint);[m
+[32m+[m	[32mif (rc != 0)[m
+[32m+[m		[32mD_GOTO(out, rc);[m
+[32m+[m
+[32m+[m	[32mrc = rdb_tx_begin(svc->ps_rsvc.s_db, svc->ps_rsvc.s_term, &tx);[m
+[32m+[m	[32mif (rc != 0)[m
+[32m+[m		[32mD_GOTO(out_svc, rc);[m
+[32m+[m
+[32m+[m	[32m/*[m
+[32m+[m	[32m * We need to read the old ACL, modify, and rewrite it[m
+[32m+[m	[32m */[m
+[32m+[m	[32mABT_rwlock_wrlock(svc->ps_lock);[m
+[32m+[m
+[32m+[m	[32mrc = pool_prop_read(&tx, svc, DAOS_PO_QUERY_PROP_ACL, &prop);[m
+[32m+[m	[32mif (rc != 0)[m
+[32m+[m		[32mD_GOTO(out_lock, rc);[m
+[32m+[m
+[32m+[m	[32mentry = daos_prop_entry_get(prop, DAOS_PROP_PO_ACL);[m
+[32m+[m	[32mif (entry == NULL) {[m
+[32m+[m		[32mD_ERROR(DF_UUID": No ACL prop entry for pool\n",[m
+[32m+[m			[32mDP_UUID(in->pdi_op.pi_uuid));[m
+[32m+[m		[32mD_GOTO(out_prop, rc);[m
+[32m+[m	[32m}[m
+[32m+[m
+[32m+[m	[32mrc = daos_acl_remove_ace((struct daos_acl **)&entry->dpe_val_ptr,[m
+[32m+[m				[32m in->pdi_type, in->pdi_principal);[m
+[32m+[m	[32mif (rc != 0) {[m
+[32m+[m		[32mD_ERROR(DF_UUID": Failed to remove requested principal, "[m
+[32m+[m			[32m"rc=%d\n", DP_UUID(in->pdi_op.pi_uuid), rc);[m
+[32m+[m		[32mD_GOTO(out_prop, rc);[m
+[32m+[m	[32m}[m
+[32m+[m
+[32m+[m	[32mrc = pool_prop_write(&tx, &svc->ps_root, prop);[m
+[32m+[m	[32mif (rc != 0) {[m
+[32m+[m		[32mD_ERROR(DF_UUID": failed to write updated ACL for pool: %d\n",[m
+[32m+[m			[32mDP_UUID(in->pui_op.pi_uuid), rc);[m
+[32m+[m		[32mD_GOTO(out_prop, rc);[m
+[32m+[m	[32m}[m
+[32m+[m
+[32m+[m	[32mrc = rdb_tx_commit(&tx);[m
+[32m+[m	[32mif (rc != 0)[m
+[32m+[m		[32mD_GOTO(out_prop, rc);[m
+[32m+[m
+[32m+[m[32mout_prop:[m
+[32m+[m	[32mdaos_prop_free(prop);[m
+[32m+[m[32mout_lock:[m
+[32m+[m	[32mABT_rwlock_unlock(svc->ps_lock);[m
+[32m+[m	[32mrdb_tx_end(&tx);[m
+[32m+[m[32mout_svc:[m
+[32m+[m	[32mds_rsvc_set_hint(&svc->ps_rsvc, &out->puo_op.po_hint);[m
+[32m+[m	[32mpool_svc_put_leader(svc);[m
+[32m+[m[32mout:[m
+[32m+[m	[32mout->puo_op.po_rc = rc;[m
+[32m+[m	[32mD_DEBUG(DF_DSMS, DF_UUID": replying rpc %p: %d\n",[m
+[32m+[m		[32mDP_UUID(in->pui_op.pi_uuid), rpc, rc);[m
+[32m+[m	[32mcrt_reply_send(rpc);[m
+[32m+[m[32m}[m
+[32m+[m
+ /**[m
+  * Send a CaRT message to the pool svc to remove an entry by principal from the[m
+  * pool's ACL.[m
+  *[m
+  * \param[in]	pool_uuid	UUID of the pool[m
+  * \param[in]	ranks		Pool service replicas[m
+[31m- * \param[in]	principal	Principal to remove from the pool ACL[m
+[32m+[m[32m * \param[in]	principal_type	Type of the principal to be removed[m
+[32m+[m[32m * \param[in]	principal_name	Name of the principal to be removed[m
+  *[m
+  * \return	0		Success[m
+  *[m
+  */[m
+ int[m
+ ds_pool_svc_delete_acl(uuid_t pool_uuid, d_rank_list_t *ranks,[m
+[31m-		       uint8_t principal_type, const char *principal_name)[m
+[32m+[m		[32m       enum daos_acl_principal_type principal_type,[m
+[32m+[m		[32m       const char *principal_name)[m
+ {[m
+ 	int				rc;[m
+ 	struct rsvc_client		client;[m
+[36m@@ -2786,7 +2864,7 @@[m [mrechoose:[m
+ 	in = crt_req_get(rpc);[m
+ 	uuid_copy(in->pdi_op.pi_uuid, pool_uuid);[m
+ 	uuid_clear(in->pdi_op.pi_hdl);[m
+[31m-	in->pdi_type = principal_type;[m
+[32m+[m	[32min->pdi_type = (uint8_t)principal_type;[m
+ 	d_iov_set(&in->pdi_principal, name_buf, name_buf_len);[m
+ [m
+ 	rc = dss_rpc_send(rpc);[m
