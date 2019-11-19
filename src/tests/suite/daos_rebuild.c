@@ -116,14 +116,14 @@ rebuild_pools_ranks(test_arg_t **args, int args_cnt, d_rank_t *failed_ranks,
 	rebuild_targets(args, args_cnt, failed_ranks, NULL, ranks_nr, false);
 }
 
-static void
+void
 rebuild_single_pool_target(test_arg_t *arg, d_rank_t failed_rank,
 			   int failed_tgt)
 {
 	rebuild_targets(&arg, 1, &failed_rank, &failed_tgt, 1, false);
 }
 
-static void
+void
 rebuild_add_back_tgts(test_arg_t *arg, d_rank_t failed_rank, int *failed_tgts,
 		      int nr)
 {
@@ -228,7 +228,7 @@ rebuild_io_obj_internal(struct ioreq *req, daos_epoch_t eph, int index)
 	return 0;
 }
 
-static void
+void
 rebuild_io(test_arg_t *arg, daos_obj_id_t *oids, int oids_nr)
 {
 	struct ioreq	req;
@@ -254,15 +254,15 @@ rebuild_io(test_arg_t *arg, daos_obj_id_t *oids, int oids_nr)
 	}
 }
 
-static void
+void
 rebuild_io_validate(test_arg_t *arg, daos_obj_id_t *oids, int oids_nr,
-		    bool discard)
+		    daos_epoch_t eph)
 {
 	int i;
 	int rc;
 
 	for (i = 0; i < oids_nr; i++) {
-		rc = daos_obj_verify(arg->coh, oids[i], DAOS_EPOCH_MAX);
+		rc = daos_obj_verify(arg->coh, oids[i], eph);
 		if (rc)
 			print_message("consitent "DF_OID" %d\n",
 				      DP_OID(oids[i]), rc);
@@ -301,536 +301,6 @@ rebuild_pool_destroy(test_arg_t *arg)
 }
 
 static void
-rebuild_dkeys(void **state)
-{
-	test_arg_t		*arg = *state;
-	daos_obj_id_t		oid;
-	struct ioreq		req;
-	int			tgt = DEFAULT_FAIL_TGT;
-	int			i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-
-	/** Insert 1000 records */
-	print_message("Insert %d kv record in object "DF_OID"\n",
-		      KEY_NR, DP_OID(oid));
-	for (i = 0; i < KEY_NR; i++) {
-		char	key[16];
-
-		sprintf(key, "dkey_0_%d", i);
-		insert_single(key, "a_key", 0, "data", strlen("data") + 1,
-			      DAOS_TX_NONE, &req);
-	}
-	ioreq_fini(&req);
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
-}
-
-static void
-rebuild_akeys(void **state)
-{
-	test_arg_t		*arg = *state;
-	daos_obj_id_t		oid;
-	struct ioreq		req;
-	int			tgt = DEFAULT_FAIL_TGT;
-	int			i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-
-	/** Insert 1000 records */
-	print_message("Insert %d kv record in object "DF_OID"\n",
-		      KEY_NR, DP_OID(oid));
-	for (i = 0; i < KEY_NR; i++) {
-		char	akey[16];
-
-		sprintf(akey, "%d", i);
-		insert_single("dkey_1_0", akey, 0, "data", strlen("data") + 1,
-			      DAOS_TX_NONE, &req);
-	}
-	ioreq_fini(&req);
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
-}
-
-static void
-rebuild_indexes(void **state)
-{
-	test_arg_t		*arg = *state;
-	test_arg_t		*new_arg = NULL;
-	daos_obj_id_t		oid;
-	struct ioreq		req;
-	int			tgt = DEFAULT_FAIL_TGT;
-	int			i;
-	int			j;
-	int			rc;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	/* create/connect another pool */
-	rc = rebuild_pool_create(&new_arg, arg, SETUP_CONT_CONNECT, NULL);
-	if (rc)
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, new_arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, new_arg->coh, oid, DAOS_IOD_ARRAY, new_arg);
-
-	/** Insert 2000 records */
-	print_message("Insert %d kv record in object "DF_OID"\n",
-		      2000, DP_OID(oid));
-	for (i = 0; i < KEY_NR; i++) {
-		char	key[16];
-
-		sprintf(key, "dkey_2_%d", i);
-		for (j = 0; j < 20; j++)
-			insert_single(key, "a_key", j, "data",
-				      strlen("data") + 1, DAOS_TX_NONE, &req);
-	}
-	ioreq_fini(&req);
-
-	/* Rebuild rank 1 */
-	rebuild_single_pool_target(new_arg, ranks_to_kill[0], tgt);
-
-	rebuild_pool_destroy(new_arg);
-}
-
-static void
-rebuild_snap_update_recs(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oid;
-	struct ioreq	req;
-	daos_recx_t	recx;
-	int		tgt = DEFAULT_FAIL_TGT;
-	char		string[100] = { 0 };
-	daos_epoch_t	snap_epoch[5];
-	int		i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-	for (i = 0; i < 5; i++)
-		sprintf(string + strlen(string), "old-snap%d", i);
-
-	recx.rx_idx = 0;
-	recx.rx_nr = strlen(string);
-	insert_recxs("d_key", "a_key", 1, DAOS_TX_NONE, &recx, 1, string,
-		     strlen(string) + 1, &req);
-
-	for (i = 0; i < 5; i++) {
-		char data[20] = { 0 };
-
-		/* Update string for each snapshot */
-		daos_cont_create_snap(arg->coh, &snap_epoch[i], NULL, NULL);
-		sprintf(data, "new-snap%d", i);
-		recx.rx_idx = i * strlen(data);
-		recx.rx_nr = strlen(data);
-		insert_recxs("d_key", "a_key", 1, DAOS_TX_NONE, &recx, 1, data,
-			      strlen(data) + 1, &req);
-	}
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	daos_fail_loc_set(DAOS_OBJ_SPECIAL_SHARD);
-	for (i = 0; i < OBJ_REPLICAS; i++) {
-		daos_handle_t th_open;
-		char verify_data[100];
-		char data[100] = { 0 };
-		int j;
-
-		strcpy(verify_data, string);
-		daos_fail_value_set(i);
-		for (j = 0; j < 5; j++) {
-			char tmp[20];
-
-			recx.rx_idx = 0;
-			recx.rx_nr = strlen(verify_data);
-			daos_tx_open_snap(arg->coh, snap_epoch[j], &th_open,
-					  NULL);
-			lookup_recxs("d_key", "a_key", 1, th_open, &recx, 1,
-				      data, strlen(verify_data), &req);
-			assert_memory_equal(data, verify_data,
-					    strlen(verify_data));
-			daos_tx_close(th_open, NULL);
-
-			sprintf(tmp, "new-snap%d", j);
-			memcpy(verify_data + j * 9, tmp, strlen(tmp)); 
-		}
-
-		recx.rx_idx = 0;
-		recx.rx_nr = strlen(verify_data);
-		lookup_recxs("d_key", "a_key", 1, DAOS_TX_NONE, &recx, 1,
-			     data, strlen(verify_data), &req);
-		assert_memory_equal(data, verify_data, strlen(verify_data));
-	}
-
-	ioreq_fini(&req);
-}
-
-static void
-rebuild_snap_punch_recs(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oid;
-	struct ioreq	req;
-	daos_recx_t	recx;
-	int		tgt = DEFAULT_FAIL_TGT;
-	char		string[100];
-	daos_epoch_t	snap_epoch[5];
-	int		i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-	for (i = 0; i < 5; i++)
-		sprintf(string + strlen(string), "old-snap%d", i);
-
-	recx.rx_idx = 0;
-	recx.rx_nr = strlen(string);
-	insert_recxs("d_key", "a_key", 1, DAOS_TX_NONE, &recx, 1, string,
-		     strlen(string) + 1, &req);
-
-	for (i = 0; i < 5; i++) {
-		/* punch string */
-		daos_cont_create_snap(arg->coh, &snap_epoch[i], NULL, NULL);
-		recx.rx_idx = i * 9; /* strlen("old-snap%d") */
-		recx.rx_nr = 9;
-		punch_recxs("d_key", "a_key", &recx, 1, DAOS_TX_NONE, &req);
-	}
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	daos_fail_loc_set(DAOS_OBJ_SPECIAL_SHARD);
-	for (i = 0; i < OBJ_REPLICAS; i++) {
-		char verify_data[100];
-		char data[100] = { 0 };
-		int j;
-
-		strcpy(verify_data, string);
-		daos_fail_value_set(i);
-		for (j = 0; j < 5; j++) {
-			daos_handle_t th_open;
-			char tmp[] = "aaaaaaaaa";
-
-			recx.rx_idx = 0;
-			recx.rx_nr = strlen(verify_data);
-			daos_tx_open_snap(arg->coh, snap_epoch[j], &th_open,
-					  NULL);
-			lookup_recxs("d_key", "a_key", 1, th_open, &recx, 1,
-				      data, strlen(verify_data), &req);
-			assert_memory_equal(data, verify_data,
-					    strlen(verify_data));
-			daos_tx_close(th_open, NULL);
-			memcpy(verify_data, tmp, strlen(tmp)); 
-			memcpy(data, tmp, strlen(tmp)); 
-		}
-
-		lookup_recxs("d_key", "a_key", 1, DAOS_TX_NONE, &recx, 1,
-			      data, strlen(verify_data), &req);
-		assert_memory_equal(data, verify_data, strlen(verify_data));
-	}
-
-	ioreq_fini(&req);
-}
-
-static void
-rebuild_snap_update_keys(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oid;
-	struct ioreq	req;
-	int		tgt = DEFAULT_FAIL_TGT;
-	daos_epoch_t	snap_epoch[5];
-	int		i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-	/* Insert dkey/akey by different snapshot */
-	for (i = 0; i < 5; i++) {
-		char dkey[20] = { 0 };
-		char akey[20] = { 0 };
-
-		/* Update string for each snapshot */
-		daos_cont_create_snap(arg->coh, &snap_epoch[i], NULL, NULL);
-		sprintf(dkey, "dkey_%d", i);
-		sprintf(akey, "akey_%d", i);
-		insert_single(dkey, "a_key", 0, "data", 1, DAOS_TX_NONE, &req);
-		insert_single("dkey", akey, 0, "data", 1, DAOS_TX_NONE, &req);
-	}
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	daos_fail_loc_set(DAOS_OBJ_SPECIAL_SHARD);
-	for (i = 0; i < OBJ_REPLICAS; i++) {
-		uint32_t	number;
-		daos_key_desc_t kds[10];
-		daos_anchor_t	anchor = { 0 };
-		char		buf[256];
-		int		buf_len = 256;
-		int		j;
-
-		daos_fail_value_set(i);
-		for (j = 0; j < 5; j++) {
-			daos_handle_t	th_open;
-
-			memset(&anchor, 0, sizeof(anchor));
-			daos_tx_open_snap(arg->coh, snap_epoch[j], &th_open,
-					  NULL);
-			number = 10;
-			enumerate_dkey(th_open, &number, kds, &anchor, buf,
-				       buf_len, &req);
-
-			assert_int_equal(number, j > 0 ? j+1 : 0);
-
-			number = 10;
-			memset(&anchor, 0, sizeof(anchor));
-			enumerate_akey(th_open, "dkey", &number, kds, &anchor,
-				       buf, buf_len, &req);
-
-			assert_int_equal(number, j);
-			daos_tx_close(th_open, NULL);
-		}
-		number = 10;
-		memset(&anchor, 0, sizeof(anchor));
-		enumerate_dkey(DAOS_TX_NONE, &number, kds, &anchor, buf,
-			       buf_len, &req);
-		assert_int_equal(number, 6);
-
-		number = 10;
-		memset(&anchor, 0, sizeof(anchor));
-		enumerate_akey(DAOS_TX_NONE, "dkey", &number, kds, &anchor,
-			       buf, buf_len, &req);
-		assert_int_equal(number, 5);
-	}
-
-	ioreq_fini(&req);
-}
-
-static void
-rebuild_snap_punch_keys(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oid;
-	struct ioreq	req;
-	int		tgt = DEFAULT_FAIL_TGT;
-	daos_epoch_t	snap_epoch[5];
-	int		i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-	/* Insert dkey/akey */
-	for (i = 0; i < 5; i++) {
-		char dkey[20] = { 0 };
-		char akey[20] = { 0 };
-
-		/* Update string for each snapshot */
-		sprintf(dkey, "dkey_%d", i);
-		sprintf(akey, "akey_%d", i);
-		insert_single(dkey, "a_key", 0, "data", 1, DAOS_TX_NONE, &req);
-		insert_single("dkey", akey, 0, "data", 1, DAOS_TX_NONE, &req);
-	}
-
-	/* Insert dkey/akey by different epoch */
-	for (i = 0; i < 5; i++) {
-		char dkey[20] = { 0 };
-		char akey[20] = { 0 };
-
-		daos_cont_create_snap(arg->coh, &snap_epoch[i], NULL, NULL);
-
-		sprintf(dkey, "dkey_%d", i);
-		sprintf(akey, "akey_%d", i);
-		punch_dkey(dkey, DAOS_TX_NONE, &req);
-		punch_akey("dkey", akey, DAOS_TX_NONE, &req);
-	}
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	daos_fail_loc_set(DAOS_OBJ_SPECIAL_SHARD);
-	for (i = 0; i < OBJ_REPLICAS; i++) {
-		daos_key_desc_t  kds[10];
-		daos_anchor_t	 anchor;
-		char		 buf[256];
-		int		 buf_len = 256;
-		uint32_t	 number;
-		int		 j;
-
-		daos_fail_value_set(i);
-		for (j = 0; j < 5; j++) {
-			daos_handle_t th_open;
-
-			daos_tx_open_snap(arg->coh, snap_epoch[j], &th_open,
-					  NULL);
-			number = 10;
-			memset(&anchor, 0, sizeof(anchor));
-			enumerate_dkey(th_open, &number, kds, &anchor, buf,
-				       buf_len, &req);
-			assert_int_equal(number, 6 - j);
-
-			number = 10;
-			memset(&anchor, 0, sizeof(anchor));
-			enumerate_akey(th_open, "dkey", &number, kds,
-				       &anchor, buf, buf_len, &req);
-			assert_int_equal(number, 5 - j);
-
-			daos_tx_close(th_open, NULL);
-		}
-
-		number = 10;
-		memset(&anchor, 0, sizeof(anchor));
-		enumerate_dkey(DAOS_TX_NONE, &number, kds, &anchor, buf,
-			       buf_len, &req);
-		assert_int_equal(number, 1);
-
-		number = 10;
-		memset(&anchor, 0, sizeof(anchor));
-		enumerate_akey(DAOS_TX_NONE, "dkey", &number, kds, &anchor,
-			       buf, buf_len, &req);
-		assert_int_equal(number, 0);
-	}
-
-	ioreq_fini(&req);
-}
-
-static void
-rebuild_multiple(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oid;
-	struct ioreq	req;
-	int		tgt = DEFAULT_FAIL_TGT;
-	int		i;
-	int		j;
-	int		k;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-
-	/** Insert 1000 records */
-	print_message("Insert %d kv record in object "DF_OID"\n",
-		      1000, DP_OID(oid));
-	for (i = 0; i < 10; i++) {
-		char	dkey[16];
-
-		sprintf(dkey, "dkey_3_%d", i);
-		for (j = 0; j < 10; j++) {
-			char	akey[16];
-
-			sprintf(akey, "akey_%d", j);
-			for (k = 0; k < 10; k++)
-				insert_single(dkey, akey, k, "data",
-					      strlen("data") + 1,
-					      DAOS_TX_NONE, &req);
-		}
-	}
-	ioreq_fini(&req);
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
-}
-
-static void
-rebuild_large_rec(void **state)
-{
-	test_arg_t		*arg = *state;
-	daos_obj_id_t		oid;
-	struct ioreq		req;
-	int			tgt = DEFAULT_FAIL_TGT;
-	int			i;
-	char			buffer[5000];
-
-	if (!test_runable(arg, 4))
-		return;
-
-	oid = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-	oid = dts_oid_set_rank(oid, ranks_to_kill[0]);
-	oid = dts_oid_set_tgt(oid, tgt);
-	ioreq_init(&req, arg->coh, oid, DAOS_IOD_ARRAY, arg);
-
-	/** Insert 1000 records */
-	print_message("Insert %d kv record in object "DF_OID"\n",
-		      KEY_NR, DP_OID(oid));
-	memset(buffer, 'a', 5000);
-	for (i = 0; i < KEY_NR; i++) {
-		char	key[16];
-
-		sprintf(key, "dkey_4_%d", i);
-		insert_single(key, "a_key", 0, buffer, 5000, DAOS_TX_NONE,
-			      &req);
-	}
-	ioreq_fini(&req);
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
-}
-
-static void
-rebuild_objects(void **state)
-{
-	test_arg_t	*arg = *state;
-	daos_obj_id_t	oids[OBJ_NR];
-	int		tgt = DEFAULT_FAIL_TGT;
-	int		i;
-
-	if (!test_runable(arg, 4))
-		return;
-
-	for (i = 0; i < OBJ_NR; i++) {
-		oids[i] = dts_oid_gen(DAOS_OC_R3S_SPEC_RANK, 0, arg->myrank);
-		oids[i] = dts_oid_set_rank(oids[i], ranks_to_kill[0]);
-		oids[i] = dts_oid_set_tgt(oids[i], DEFAULT_FAIL_TGT);
-	}
-
-	rebuild_io(arg, oids, OBJ_NR);
-
-	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
-
-	rebuild_io_validate(arg, oids, OBJ_NR, false);
-
-	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
-}
-
-static void
 rebuild_drop_scan(void **state)
 {
 	test_arg_t	*arg = *state;
@@ -858,7 +328,7 @@ rebuild_drop_scan(void **state)
 	MPI_Barrier(MPI_COMM_WORLD);
 	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
 
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
 }
 
@@ -889,7 +359,7 @@ rebuild_retry_rebuild(void **state)
 	MPI_Barrier(MPI_COMM_WORLD);
 	rebuild_single_pool_target(arg, ranks_to_kill[0], tgt);
 
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], &tgt, 1);
 }
 
@@ -918,7 +388,7 @@ rebuild_retry_for_stale_pool(void **state)
 	MPI_Barrier(MPI_COMM_WORLD);
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], NULL, 1);
 }
 
@@ -947,7 +417,7 @@ rebuild_drop_obj(void **state)
 	MPI_Barrier(MPI_COMM_WORLD);
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], NULL, 1);
 }
 
@@ -1008,8 +478,8 @@ rebuild_multiple_pools(void **state)
 
 	rebuild_pools_ranks(args, 2, ranks_to_kill, 1);
 
-	rebuild_io_validate(args[0], oids, OBJ_NR, true);
-	rebuild_io_validate(args[1], oids, OBJ_NR, true);
+	rebuild_io_validate(args[0], oids, OBJ_NR, DAOS_EPOCH_MAX);
+	rebuild_io_validate(args[1], oids, OBJ_NR, DAOS_EPOCH_MAX);
 
 	rebuild_pool_destroy(args[1]);
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], NULL, 1);
@@ -1274,7 +744,7 @@ rebuild_iv_tgt_fail(void **state)
 	MPI_Barrier(MPI_COMM_WORLD);
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], NULL, 1);
 }
@@ -1283,18 +753,11 @@ static void
 rebuild_tgt_start_fail(void **state)
 {
 	test_arg_t	*arg = *state;
-	test_arg_t	*new_arg = NULL;
 	daos_obj_id_t	oids[OBJ_NR];
 	d_rank_t	exclude_rank = 0;
-	int		rc;
 	int		i;
 
 	if (!test_runable(arg, 6))
-		return;
-
-	/* create/connect another pool */
-	rc = rebuild_pool_create(&new_arg, arg, SETUP_CONT_CONNECT, NULL);
-	if (rc)
 		return;
 
 	for (i = 0; i < OBJ_NR; i++) {
@@ -1302,20 +765,19 @@ rebuild_tgt_start_fail(void **state)
 		oids[i] = dts_oid_set_rank(oids[i], ranks_to_kill[0]);
 	}
 
-	rebuild_io(new_arg, oids, OBJ_NR);
+	rebuild_io(arg, oids, OBJ_NR);
 
 	/* failed to start rebuild on rank 0 */
 	if (arg->myrank == 0)
-		daos_mgmt_set_params(new_arg->group, exclude_rank,
+		daos_mgmt_set_params(arg->group, exclude_rank,
 				     DSS_KEY_FAIL_LOC,
 				  DAOS_REBUILD_TGT_START_FAIL | DAOS_FAIL_ONCE,
 				  0, NULL);
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	/* Rebuild rank 1 */
-	rebuild_single_pool_rank(new_arg, ranks_to_kill[0]);
-	rebuild_io_validate(new_arg, oids, OBJ_NR, true);
-	rebuild_pool_destroy(new_arg);
+	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 }
 
 static void
@@ -1543,7 +1005,7 @@ rebuild_offline_pool_connect_internal(void **state, unsigned int fail_loc)
 	arg->rebuild_pre_cb = NULL;
 	arg->rebuild_cb = NULL;
 
-	rebuild_io_validate(arg, oids, OBJ_NR, false);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 }
 
 static void
@@ -1584,7 +1046,7 @@ rebuild_offline(void **state)
 	arg->rebuild_pre_cb = NULL;
 	arg->rebuild_post_cb = NULL;
 
-	rebuild_io_validate(arg, oids, OBJ_NR, false);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 }
 
 static void
@@ -1656,7 +1118,7 @@ rebuild_master_change_during_scan(void **state)
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
 	/* Verify the data */
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 }
 
 static void
@@ -1686,7 +1148,7 @@ rebuild_master_change_during_rebuild(void **state)
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
 	/* Verify the data */
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 }
 
 static int
@@ -1741,7 +1203,7 @@ rebuild_nospace(void **state)
 	rebuild_single_pool_rank(arg, ranks_to_kill[0]);
 
 	arg->rebuild_cb = NULL;
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 
 	rebuild_add_back_tgts(arg, ranks_to_kill[0], NULL, 1);
 }
@@ -1800,7 +1262,7 @@ rebuild_multiple_tgts(void **state)
 		test_rebuild_wait(&arg, 1);
 
 	/* Verify the data */
-	rebuild_io_validate(arg, &oid, 1, true);
+	rebuild_io_validate(arg, &oid, 1, DAOS_EPOCH_MAX);
 
 	daos_obj_layout_free(layout);
 
@@ -1867,7 +1329,7 @@ rebuild_master_failure(void **state)
 	rebuild_targets(&arg, 1, ranks_to_kill, NULL, 1, true);
 
 	/* Verify the data */
-	rebuild_io_validate(arg, oids, OBJ_NR, true);
+	rebuild_io_validate(arg, oids, OBJ_NR, DAOS_EPOCH_MAX);
 
 	/* Verify the POOL_QUERY get same rebuild status after leader change */
 	pinfo.pi_bits = DPI_REBUILD_STATUS;
@@ -2093,19 +1555,20 @@ multi_pools_rebuild_concurrently(void **state)
 	rebuild_pools_ranks(args, POOL_NUM * CONT_PER_POOL, ranks_to_kill, 1);
 
 	for (i = POOL_NUM * CONT_PER_POOL - 1; i >= 0; i--) {
-		rebuild_io_validate(args[i], oids, OBJ_PER_CONT, true);
+		rebuild_io_validate(args[i], oids, OBJ_PER_CONT,
+				    DAOS_EPOCH_MAX);
 		rebuild_pool_destroy(args[i]);
 	}
 }
 
-static int
+int
 rebuild_sub_setup(void **state)
 {
 	return test_setup(state, SETUP_CONT_CONNECT, true,
 			  REBUILD_SUBTEST_POOL_SIZE, NULL);
 }
 
-static int
+int
 rebuild_small_sub_setup(void **state)
 {
 	return test_setup(state, SETUP_CONT_CONNECT, true,
@@ -2114,84 +1577,66 @@ rebuild_small_sub_setup(void **state)
 
 /** create a new pool/container for each test */
 static const struct CMUnitTest rebuild_tests[] = {
-	{"REBUILD1: rebuild small rec mulitple dkeys",
-	 rebuild_dkeys, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD2: rebuild small rec multiple akeys",
-	 rebuild_akeys, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD3: rebuild small rec multiple indexes",
-	 rebuild_indexes, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD4: rebuild small rec multiple keys/indexes",
-	 rebuild_multiple, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD5: rebuild large rec single index",
-	 rebuild_large_rec, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD6: rebuild records with multiple snapshots",
-	 rebuild_snap_update_recs, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD7: rebuild punch/records with multiple snapshots",
-	 rebuild_snap_punch_recs, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD8: rebuild keys with multiple snapshots",
-	 rebuild_snap_update_keys, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD9: rebuild keys/punch with multiple snapshots",
-	 rebuild_snap_punch_keys, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD10: rebuild multiple objects",
-	 rebuild_objects, rebuild_sub_setup, test_teardown},
-	{"REBUILD11: drop rebuild scan reply",
+	{"REBUILD0: drop rebuild scan reply",
 	rebuild_drop_scan, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD12: retry rebuild for not ready",
+	{"REBUILD1: retry rebuild for not ready",
 	rebuild_retry_rebuild, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD13: drop rebuild obj reply",
+	{"REBUILD2: drop rebuild obj reply",
 	rebuild_drop_obj, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD14: rebuild multiple pools",
+	{"REBUILD3: rebuild multiple pools",
 	rebuild_multiple_pools, rebuild_sub_setup, test_teardown},
-	{"REBUILD15: rebuild update failed",
+	{"REBUILD4: rebuild update failed",
 	rebuild_update_failed, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD16: retry rebuild for pool stale",
+	{"REBUILD5: retry rebuild for pool stale",
 	rebuild_retry_for_stale_pool, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD17: rebuild with container destroy",
+	{"REBUILD6: rebuild with container destroy",
 	rebuild_destroy_container, rebuild_sub_setup, test_teardown},
-	{"REBUILD18: rebuild with container close",
+	{"REBUILD7: rebuild with container close",
 	rebuild_close_container, rebuild_small_sub_setup, test_teardown},
-	{"REBUILD19: rebuild with pool destroy during scan",
+	{"REBUILD8: rebuild with pool destroy during scan",
 	rebuild_destroy_pool_during_scan, rebuild_sub_setup, test_teardown},
-	{"REBUILD20: rebuild with pool destroy during rebuild",
+	{"REBUILD9: rebuild with pool destroy during rebuild",
 	rebuild_destroy_pool_during_rebuild, rebuild_sub_setup, test_teardown},
-	{"REBUILD21: rebuild iv tgt fail",
-	rebuild_iv_tgt_fail, NULL, test_case_teardown},
-	{"REBUILD22: rebuild tgt start fail",
-	rebuild_tgt_start_fail, NULL, test_case_teardown},
-	{"REBUILD23: rebuild send objects failed",
-	 rebuild_send_objects_fail, NULL, test_case_teardown},
-	{"REBUILD24: rebuild empty pool offline",
-	rebuild_offline_empty, NULL, test_case_teardown},
-	{"REBUILD25: rebuild no space failure",
-	rebuild_nospace, NULL, test_case_teardown},
-	{"REBUILD26: rebuild multiple tgts",
-	rebuild_multiple_tgts, NULL, test_case_teardown},
-	{"REBUILD27: disconnect pool during scan",
-	 rebuild_tgt_pool_disconnect_in_scan, NULL, test_case_teardown},
-	{"REBUILD28: disconnect pool during rebuild",
-	 rebuild_tgt_pool_disconnect_in_rebuild, NULL, test_teardown},
-	{"REBUILD29: multi-pools rebuild concurrently",
+	{"REBUILD10: rebuild iv tgt fail",
+	rebuild_iv_tgt_fail, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD11: rebuild tgt start fail",
+	rebuild_tgt_start_fail, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD12: rebuild send objects failed",
+	 rebuild_send_objects_fail, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD13: rebuild empty pool offline",
+	rebuild_offline_empty, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD14: rebuild no space failure",
+	rebuild_nospace, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD15: rebuild multiple tgts",
+	rebuild_multiple_tgts, rebuild_small_sub_setup, test_teardown},
+	{"REBUILD16: disconnect pool during scan",
+	 rebuild_tgt_pool_disconnect_in_scan, rebuild_small_sub_setup,
+	 test_teardown},
+	{"REBUILD17: disconnect pool during rebuild",
+	 rebuild_tgt_pool_disconnect_in_rebuild, rebuild_small_sub_setup,
+	test_teardown},
+	{"REBUILD18: multi-pools rebuild concurrently",
 	 multi_pools_rebuild_concurrently, rebuild_sub_setup, test_teardown},
-	{"REBUILD30: rebuild with master change during scan",
+	{"REBUILD19: rebuild with master change during scan",
 	rebuild_master_change_during_scan, rebuild_sub_setup, test_teardown},
-	{"REBUILD31: rebuild with master change during rebuild",
+	{"REBUILD20: rebuild with master change during rebuild",
 	rebuild_master_change_during_rebuild, rebuild_sub_setup, test_teardown},
-	{"REBUILD32: rebuild with master failure",
+	{"REBUILD21: rebuild with master failure",
 	 rebuild_master_failure, rebuild_sub_setup, test_teardown},
-	{"REBUILD33: connect pool during scan for offline rebuild",
+	{"REBUILD22: connect pool during scan for offline rebuild",
 	 rebuild_offline_pool_connect_in_scan, rebuild_sub_setup,
 	 test_teardown},
-	{"REBUILD34: connect pool during rebuild for offline rebuild",
+	{"REBUILD23: connect pool during rebuild for offline rebuild",
 	 rebuild_offline_pool_connect_in_rebuild, rebuild_sub_setup,
 	 test_teardown},
-	{"REBUILD35: offline rebuild",
+	{"REBUILD24: offline rebuild",
 	rebuild_offline, rebuild_sub_setup, test_teardown},
-	{"REBUILD36: rebuild with two failures",
+	{"REBUILD25: rebuild with two failures",
 	 rebuild_multiple_failures, rebuild_sub_setup, test_teardown},
-	{"REBUILD37: rebuild fail all replicas before rebuild",
+	{"REBUILD26: rebuild fail all replicas before rebuild",
 	 rebuild_fail_all_replicas_before_rebuild, rebuild_sub_setup,
 	 test_teardown},
-	{"REBUILD38: rebuild fail all replicas",
+	{"REBUILD27: rebuild fail all replicas",
 	 rebuild_fail_all_replicas, rebuild_sub_setup, test_case_teardown},
 };
 

@@ -69,6 +69,9 @@ daos_tests:
     test_R:
       daos_test: R
       test_name: DAOS MD replication tests
+    test_v:
+      daos_test: v
+      test_name: DAOS rebuild simple tests
     test_O:
       daos_test: O
       test_name: OID Allocator tests
