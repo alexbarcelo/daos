@@ -1101,9 +1101,9 @@ obj_ec_recx_reasb(daos_iod_t *iod, d_sg_list_t *sgl,
 }
 
 int
-obj_ec_req_reassemb(daos_obj_rw_t *args, daos_obj_id_t oid,
-		    struct daos_oclass_attr *oca,
-		    struct obj_reasb_req *reasb_req, bool update)
+obj_ec_req_reasb(daos_obj_rw_t *args, daos_obj_id_t oid,
+		 struct daos_oclass_attr *oca, struct obj_reasb_req *reasb_req,
+		 bool update)
 {
 	daos_iod_t		*iods;
 	d_sg_list_t		*sgls;
