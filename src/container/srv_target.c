@@ -33,7 +33,7 @@
  *         Global  ds_pool
  *                 ds_pool_hdl
  *
- *   Thread-local  ds_pool_child  ds_cont
+ *   Thread-local  ds_pool_child  ds_cont_child
  *                                ds_cont_hdl
  */
 #define D_LOGFAC	DD_FAC(container)
@@ -427,121 +427,6 @@ ds_cont_hdl_get(struct ds_cont_hdl *hdl)
 	cont_hdl_get_internal(hash, hdl);
 }
 
-/* ds cont cache */
-static struct daos_lru_cache   *ds_cont_cache;
-static ABT_mutex		cont_cache_lock;
-
-static inline struct ds_cont *
-cont_obj(struct daos_llink *llink)
-{
-	return container_of(llink, struct ds_cont, sc_list);
-}
-
-static int
-cont_alloc_ref(void *key, unsigned int ksize, void *varg,
-	       struct daos_llink **link)
-{
-	struct ds_cont	*cont;
-	uuid_t		*uuid = varg;
-
-	D_ALLOC_PTR(cont);
-	uuid_copy(cont->sc_uuid, *uuid);
-	*link = &cont->sc_list;
-	return 0;
-}
-
-static void
-cont_free_ref(struct daos_llink *llink)
-{
-	struct ds_cont *cont = cont_obj(llink);
-
-	D_FREE(cont);
-}
-
-static bool
-cont_cmp_keys(const void *key, unsigned int ksize, struct daos_llink *llink)
-{
-	struct ds_cont *cont = cont_obj(llink);
-
-	return uuid_compare(key, cont->sc_uuid) == 0;
-}
-
-static struct daos_llink_ops ds_cont_cache_ops = {
-	.lop_alloc_ref	= cont_alloc_ref,
-	.lop_free_ref	= cont_free_ref,
-	.lop_cmp_keys	= cont_cmp_keys
-};
-
-int
-ds_cont_lookup_create(const uuid_t uuid, void *arg, struct ds_cont **cont_p)
-{
-	struct daos_llink	*llink;
-	int			rc;
-
-	ABT_mutex_lock(cont_cache_lock);
-	rc = daos_lru_ref_hold(ds_cont_cache, (void *)uuid, sizeof(uuid_t),
-			       arg, &llink);
-	ABT_mutex_unlock(cont_cache_lock);
-	if (rc != 0) {
-		if (arg == NULL && rc == -DER_NONEXIST)
-			D_DEBUG(DF_DSMS, DF_UUID": pure lookup failed: %d\n",
-				DP_UUID(uuid), rc);
-		else
-			D_ERROR(DF_UUID": failed to lookup%s: %d\n",
-				DP_UUID(uuid), arg == NULL ? "" : "/create",
-				rc);
-		return rc;
-	}
-
-	*cont_p = cont_obj(llink);
-	return 0;
-}
-
-struct ds_cont *
-ds_cont_lookup(const uuid_t uuid)
-{
-	struct ds_cont *cont;
-	int		rc;
-
-	rc = ds_cont_lookup_create(uuid, NULL, &cont);
-	if (rc != 0)
-		cont = NULL;
-
-	return cont;
-}
-
-void
-ds_cont_put(struct ds_cont *cont)
-{
-	ABT_mutex_lock(cont_cache_lock);
-	daos_lru_ref_release(ds_cont_cache, &cont->sc_list);
-	ABT_mutex_unlock(cont_cache_lock);
-}
-
-int
-ds_cont_cache_init(void)
-{
-	int rc;
-
-	rc = ABT_mutex_create(&cont_cache_lock);
-	if (rc != ABT_SUCCESS)
-		return dss_abterr2der(rc);
-	rc = daos_lru_cache_create(-1 /* bits */, D_HASH_FT_NOLOCK /* feats */,
-				   &ds_cont_cache_ops, &ds_cont_cache);
-	if (rc != 0)
-		ABT_mutex_free(&cont_cache_lock);
-	return rc;
-}
-
-void
-ds_cont_cache_fini(void)
-{
-	ABT_mutex_lock(cont_cache_lock);
-	daos_lru_cache_destroy(ds_cont_cache);
-	ABT_mutex_unlock(cont_cache_lock);
-	ABT_mutex_free(&cont_cache_lock);
-}
-
 /*
  * Called via dss_collective() to destroy the ds_cont object as well as the vos
  * container.
@@ -779,9 +664,6 @@ ds_cont_local_open(uuid_t pool_uuid, uuid_t cont_hdl_uuid, uuid_t cont_uuid,
 			}
 		}
 
-		if (rc == 0)
-			hdl->sch_deleted = 0;
-
 		if (cont_hdl != NULL && rc == 0)
 			*cont_hdl = hdl;
 		else
@@ -928,7 +810,6 @@ ds_cont_tgt_open(uuid_t pool_uuid, uuid_t cont_hdl_uuid,
 		 uuid_t cont_uuid, uint64_t capas)
 {
 	struct ds_pool		*pool = NULL;
-	struct ds_cont		*cont = NULL;
 	struct cont_tgt_open_arg arg;
 	struct dss_coll_ops	coll_ops = { 0 };
 	struct dss_coll_args	coll_args = { 0 };
@@ -974,43 +855,33 @@ ds_cont_tgt_open(uuid_t pool_uuid, uuid_t cont_hdl_uuid,
 
 	pool = ds_pool_lookup(pool_uuid);
 	D_ASSERT(pool != NULL);
-	rc = ds_cont_lookup_create(cont_uuid, &cont_uuid, &cont);
-	if (rc)
-		D_GOTO(out, rc);
-	cont->sc_iv_ns = pool->sp_iv_ns;
-
 	ds_cont_tgt_snapshots_refresh(pool_uuid, cont_uuid);
-out:
-	if (pool)
-		ds_pool_put(pool);
-	if (cont)
-		ds_cont_put(cont);
+	ds_pool_put(pool);
 
 	return rc;
 }
 
-/* Close a single record (i.e., handle). */
+/* Close a single per-thread open container handle */
 static int
-cont_close_one_rec(struct cont_tgt_close_rec *rec)
+cont_close_one_hdl(uuid_t cont_hdl_uuid)
 {
 	struct dsm_tls	       *tls = dsm_tls_get();
 	struct ds_cont_hdl     *hdl;
 
-	hdl = cont_hdl_lookup_internal(&tls->dt_cont_hdl_hash, rec->tcr_hdl);
+	hdl = cont_hdl_lookup_internal(&tls->dt_cont_hdl_hash, cont_hdl_uuid);
 
 	if (hdl == NULL) {
-		D_DEBUG(DF_DSMS, DF_CONT": already closed: hdl="DF_UUID" hce="
-			DF_U64"\n", DP_CONT(NULL, NULL), DP_UUID(rec->tcr_hdl),
-			rec->tcr_hce);
+		D_DEBUG(DF_DSMS, DF_CONT": already closed: hdl="DF_UUID"\n",
+			DP_CONT(NULL, NULL), DP_UUID(cont_hdl_uuid));
 		return 0;
 	}
 
 	D_ASSERT(hdl->sch_cont != NULL);
 
-	D_DEBUG(DF_DSMS, DF_CONT": closing (%s): hdl="DF_UUID" hce="DF_U64"\n",
+	D_DEBUG(DF_DSMS, DF_CONT": closing (%s): hdl="DF_UUID"\n",
 		DP_CONT(hdl->sch_pool->spc_uuid, hdl->sch_cont->sc_uuid),
 		hdl->sch_cont->sc_closing ? "resent" : "new",
-		DP_UUID(rec->tcr_hdl), rec->tcr_hce);
+		DP_UUID(cont_hdl_uuid));
 
 	/*
 	 * FIXME: aggregation shouldn't be tied with container open/close,
@@ -1020,13 +891,10 @@ cont_close_one_rec(struct cont_tgt_close_rec *rec)
 	cont_stop_agg_ult(hdl->sch_cont);
 
 	dtx_batched_commit_deregister(hdl);
-	if (!hdl->sch_deleted) {
-		cont_hdl_delete(&tls->dt_cont_hdl_hash, hdl);
-		hdl->sch_deleted = 1;
-	}
 
 	daos_csummer_destroy(&hdl->sch_csummer);
 
+	ds_cont_local_close(cont_hdl_uuid);
 	cont_hdl_put_internal(&tls->dt_cont_hdl_hash, hdl);
 	return 0;
 }
@@ -1043,7 +911,7 @@ cont_close_one(void *vin)
 	for (i = 0; i < in->tci_recs.ca_count; i++) {
 		int rc_tmp;
 
-		rc_tmp = cont_close_one_rec(&recs[i]);
+		rc_tmp = cont_close_one_hdl(recs[i].tcr_hdl);
 		if (rc_tmp != 0 && rc == 0)
 			rc = rc_tmp;
 	}

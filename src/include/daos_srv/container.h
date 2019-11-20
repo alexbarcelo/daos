@@ -106,8 +106,7 @@ struct ds_cont_hdl {
 	struct ds_cont_child	*sch_cont;
 	struct daos_csummer	*sch_csummer;
 	int			sch_ref;
-	uint32_t		sch_dtx_registered:1,
-				sch_deleted:1;
+	uint32_t		sch_dtx_registered:1;
 };
 
 struct ds_cont_hdl *ds_cont_hdl_lookup(const uuid_t uuid);
