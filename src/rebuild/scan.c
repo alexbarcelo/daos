@@ -548,7 +548,7 @@ out:
 
 #define LOCAL_ARRAY_SIZE	128
 static int
-placement_check(uuid_t co_uuid, vos_iter_entry_t *ent, void *data)
+rebuild_obj_scan_cb(uuid_t co_uuid, vos_iter_entry_t *ent, void *data)
 {
 	struct rebuild_scan_arg	*arg = data;
 	struct rebuild_tgt_pool_tracker *rpt = arg->rpt;
@@ -636,17 +636,31 @@ out:
 	return rc;
 }
 
-struct rebuild_iter_arg {
-	ds_iter_cb_t	callback;
-	void		*arg;
-};
+static int
+rebuild_container_scan_cb(daos_handle_t ph, uuid_t co_uuid, void *data)
+{
+	struct rebuild_scan_arg *arg = data;
+	struct rebuild_tgt_pool_tracker *rpt = arg->rpt;
+	int			rc;
+
+	/* resync DTXs' status firstly. */
+	rc = dtx_resync(ph, rpt->rt_pool_uuid, co_uuid, rpt->rt_rebuild_ver,
+			true);
+	if (rc) {
+		D_ERROR(DF_UUID" dtx resync failed: rc %d\n",
+			DP_UUID(rpt->rt_pool_uuid), rc);
+		return rc;
+	}
+
+	return ds_cont_iter(ph, co_uuid, rebuild_obj_scan_cb, data,
+			    VOS_ITER_OBJ);
+}
 
 int
 rebuild_scanner(void *data)
 {
-	struct rebuild_iter_arg *arg = data;
-	struct rebuild_scan_arg	*scan_arg = arg->arg;
-	struct rebuild_tgt_pool_tracker *rpt = scan_arg->rpt;
+	struct rebuild_scan_arg	*arg = data;
+	struct rebuild_tgt_pool_tracker *rpt = arg->rpt;
 
 	if (!is_current_tgt_up(rpt))
 		return 0;
@@ -654,8 +668,7 @@ rebuild_scanner(void *data)
 	while (daos_fail_check(DAOS_REBUILD_TGT_SCAN_HANG))
 		ABT_thread_yield();
 
-	return ds_pool_iter(rpt->rt_pool_uuid, arg->callback, arg->arg,
-			    rpt->rt_rebuild_ver, DAOS_INTENT_REBUILD);
+	return ds_pool_iter(rpt->rt_pool_uuid, rebuild_container_scan_cb, arg);
 }
 
 static int
@@ -664,8 +677,7 @@ rebuild_scan_done(void *data)
 	struct rebuild_tgt_pool_tracker *rpt = data;
 	struct rebuild_pool_tls *tls;
 
-	tls = rebuild_pool_tls_lookup(rpt->rt_pool_uuid,
-				      rpt->rt_rebuild_ver);
+	tls = rebuild_pool_tls_lookup(rpt->rt_pool_uuid, rpt->rt_rebuild_ver);
 	D_ASSERT(tls != NULL);
 
 	tls->rebuild_pool_scanning = 0;
@@ -683,7 +695,6 @@ rebuild_scan_leader(void *data)
 	struct pool_map		  *map;
 	struct rebuild_tgt_pool_tracker *rpt;
 	struct rebuild_pool_tls	  *tls;
-	struct rebuild_iter_arg    iter_arg;
 	int			   rc;
 
 	D_ASSERT(arg != NULL);
@@ -701,10 +712,7 @@ rebuild_scan_leader(void *data)
 	}
 	ABT_mutex_unlock(rpt->rt_lock);
 
-	iter_arg.arg = arg;
-	iter_arg.callback = placement_check;
-
-	rc = dss_thread_collective(rebuild_scanner, &iter_arg, 0);
+	rc = dss_thread_collective(rebuild_scanner, arg, 0);
 	if (rc)
 		D_GOTO(put_plmap, rc);
 
